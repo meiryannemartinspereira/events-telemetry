@@ -2,9 +2,11 @@
 
 ## 📋 Visão Geral
 
-O **Serviço de Eventos** é responsável por receber, processar e persistir eventos de telemetria e operação de veículos.
+O Serviço de Eventos é responsável por receber, armazenar e disponibilizar eventos operacionais gerados pelos veículos da frota.
 
-Os eventos são produzidos e enviados para tópicos no **Apache Kafka**, consumidos pelo serviço e armazenados no **PostgreSQL**, tornando-se a fonte de dados para consultas e dashboards.
+Os eventos são produzidos e enviados para tópicos no Apache Kafka. Um consumidor processa essas mensagens e persiste os dados no PostgreSQL, que atua como fonte oficial de consulta.
+
+Além disso, serviços de cadastro mantêm atualizadas as informações de motoristas e veículos, permitindo o enriquecimento dos dados apresentados no Dashboard de Eventos.
 
 ---
 
@@ -32,9 +34,9 @@ Os eventos são produzidos e enviados para tópicos no **Apache Kafka**, consumi
 └──────┬──────┘
        │
        ▼
-┌─────────────┐
-│ Middleware  │
-└──────┬──────┘
+┌───────────────────┐
+│   API de Eventos  │
+└──────┬────────────┘
        │
        ▼
 ┌─────────────┐
@@ -46,14 +48,12 @@ Os eventos são produzidos e enviados para tópicos no **Apache Kafka**, consumi
 
 ## 🔄 Fluxo de Processamento
 
-1. Um **Producer** publica eventos em tópicos Kafka.
-2. O **Consumer** consome os eventos.
-3. Os eventos são persistidos no **PostgreSQL** (Source).
-4. O **Middleware** consolida e enriquece os dados.
-5. O **Dashboard** consulta os dados processados.
-6. Serviços de cadastro mantêm atualizadas as informações de:
-   - Motoristas
-   - Veículos
+1. Um Producer publica eventos em tópicos Kafka.
+2. O Consumer consome os eventos.
+3. Os eventos são persistidos no PostgreSQL.
+4. Serviços de cadastro atualizam as informações de motoristas e veículos.
+5. A API de Eventos consulta e consolida os dados.
+6. O Dashboard consome os endpoints disponibilizados pela API.
 
 ---
 
@@ -63,13 +63,13 @@ Os eventos são produzidos e enviados para tópicos no **Apache Kafka**, consumi
 
 Representa o motorista responsável pelo veículo.
 
-| Campo | Tipo | Descrição |
-|---------|---------|---------|
-| id | Integer | Identificador único |
-| name | String | Nome do motorista |
-| cpf | String | CPF do motorista |
-| phone | String | Telefone |
-| date_register | Timestamp | Data de cadastro |
+| Campo | Tipo |
+|---------|---------|
+| id | Integer |
+| name | String |
+| cpf | String |
+| phone | String |
+| date_register | Timestamp |
 
 ---
 
@@ -77,49 +77,80 @@ Representa o motorista responsável pelo veículo.
 
 Representa um veículo vinculado a um motorista.
 
-| Campo | Tipo | Descrição |
-|---------|---------|---------|
-| id | Integer | Identificador único |
-| plate | String | Placa do veículo |
-| model | String | Modelo |
-| vehicle_year | Integer | Ano do veículo |
-| driver_id | Integer | Referência ao motorista |
+| Campo | Tipo |
+|---------|---------|
+| id | Integer |
+| plate | String |
+| model | String |
+| vehicle_year | Integer |
+| driver_id | Integer |
 
 ---
 
 ### Event
 
-Representa um evento gerado por um veículo.
+Representa um evento operacional gerado por um veículo.
 
-| Campo | Tipo | Descrição |
-|---------|---------|---------|
-| id | Integer | Identificador único |
-| vehicle_id | Integer | Veículo responsável |
-| type | String | Tipo do evento |
-| description | String | Descrição do evento |
-| location | String | Localização |
-| date_time | Timestamp | Data e hora do evento |
+| Campo | Tipo |
+|---------|---------|
+| id | Integer |
+| vehicle_id | Integer |
+| type | String |
+| description | String |
+| location | String |
+| date_time | Timestamp |
 
 ---
 
-## 📊 Relacionamento das Entidades
+## 📊 Diagrama Entidade Relacionamento
 
 ```text
-Driver (1)
-    │
-    ▼
-Vehicle (N)
-    │
-    ▼
-Event (N)
++-------------+
+|   driver    |
++-------------+
+| id (PK)     |
+| name        |
+| cpf         |
+| phone       |
+| date_register
++-------------+
+       |
+       | 1:N
+       ▼
++-------------+
+|   vehicle   |
++-------------+
+| id (PK)     |
+| plate       |
+| model       |
+| vehicle_year|
+| driver_id FK|
++-------------+
+       |
+       | 1:N
+       ▼
++-------------+
+|   events    |
++-------------+
+| id (PK)     |
+| vehicle_id FK
+| type        |
+| description |
+| location    |
+| date_time   |
++-------------+
 ```
 
-### Regras de Negócio
+---
+
+## 📐 Regras de Negócio
 
 - Um motorista pode possuir vários veículos.
 - Um veículo pertence a apenas um motorista.
 - Um veículo pode gerar vários eventos.
 - Um evento pertence a apenas um veículo.
+- Eventos não podem existir sem um veículo associado.
+- Veículos não podem existir sem um motorista associado.
 
 ---
 
@@ -164,38 +195,37 @@ CREATE TABLE events (
 
 ---
 
-## 🚀 Endpoints
+## 📩 Exemplo de Evento Recebido
 
-### Buscar todos os eventos
+```json
+{
+  "vehicle_id": 15,
+  "type": "CHECKPOINT",
+  "description": "Chegada ao cliente",
+  "location": "Porto Alegre - RS",
+  "date_time": "2026-06-02T14:30:00"
+}
+```
+
+---
+
+## 🚀 API REST
+
+### Listar todos os eventos
 
 ```http
 GET /all/events
 ```
 
-#### Exemplo de resposta
-
-```json
-[
-  {
-    "id": 1,
-    "vehicle_id": 10,
-    "type": "CHECKPOINT",
-    "description": "Veículo chegou ao destino",
-    "location": "Porto Alegre",
-    "date_time": "2026-06-02T10:30:00"
-  }
-]
-```
-
 ---
 
-### Buscar evento por ID
+### Buscar evento por identificador
 
 ```http
 GET /event/{id}
 ```
 
-#### Exemplo
+Exemplo:
 
 ```http
 GET /event/1
@@ -209,7 +239,7 @@ GET /event/1
 GET /driver/{id}/events
 ```
 
-#### Exemplo
+Exemplo:
 
 ```http
 GET /driver/5/events
@@ -221,26 +251,29 @@ Retorna todos os eventos dos veículos vinculados ao motorista informado.
 
 ## 🎯 Tipos de Eventos
 
-- CHECKPOINT
-- CARGA
-- DESCARGA
-- ABASTECIMENTO
-- MANUTENÇÃO
-- INÍCIO DE VIAGEM
-- FIM DE VIAGEM
+| Tipo |
+|--------|
+| CHECKPOINT |
+| CARGA |
+| DESCARGA |
+| ABASTECIMENTO |
+| MANUTENÇÃO |
+| INICIO_VIAGEM |
+| FIM_VIAGEM |
 
 ---
 
-## 🛠️ Tecnologias Utilizadas
+## 🛠️ Stack Tecnológica
 
+- Python
+- FastAPI
 - PostgreSQL
 - Apache Kafka
+- Docker
 - REST API
-- Middleware de Integração
-- Dashboard de Monitoramento
 
 ---
 
-## 📈 Objetivo do Projeto
+## 📈 Objetivo
 
-Disponibilizar uma plataforma centralizada para armazenamento, consulta e monitoramento de eventos operacionais de veículos, permitindo rastreabilidade completa desde a geração do evento até sua visualização no dashboard.
+Disponibilizar uma API centralizada para consulta de eventos operacionais da frota, permitindo rastreabilidade completa desde a geração do evento até sua visualização em dashboards e sistemas consumidores.
